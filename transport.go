@@ -24,6 +24,15 @@ type Transport interface {
 	SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error)
 }
 
+var _ Transport = (*TransportFunc)(nil)
+
+// TransportFunc is a function type for sending JSON-RPC requests
+type TransportFunc func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error)
+
+func (h TransportFunc) SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+	return h(ctx, input)
+}
+
 // HTTPTransport is a transport for sending JSON-RPC requests via HTTP
 type HTTPTransport struct {
 	client  *http.Client
