@@ -3,6 +3,16 @@
 ## Project language
 This project prioritizes convenience as OSS, and comments and documentation for users should be generated in English, no matter what language is entered at the prompt.
 
+### Code comments
+All code comments in source files (.go) must be written in English. This includes:
+- Package comments
+- Function and method comments
+- Inline comments
+- Variable and constant declarations
+- Struct and interface documentation
+
+This rule applies to all contributors and AI assistants working on this project. Even if the prompt or conversation is in another language, all code and comments must be in English for consistency and accessibility.
+
 ## ディレクトリ配置規則
 Goのパッケージは極力分割せずプロジェクトルートに格納して下さい。
 
