@@ -62,7 +62,7 @@ func TestHTTPTransport(t *testing.T) {
 	headers := map[string]string{
 		"X-API-Key": "test-api-key",
 	}
-	transport := NewHTTPTransport(server.URL, headers)
+	transport := NewHTTPTransport(server.URL, WithHTTPHeaders(headers))
 
 	// Create request
 	request := &JSONRPCRequest{
@@ -106,7 +106,7 @@ func TestHTTPTransport(t *testing.T) {
 func TestHTTPTransportErrors(t *testing.T) {
 	t.Run("JSON encode error", func(t *testing.T) {
 		// Create a transport
-		transport := NewHTTPTransport("http://example.com", nil)
+		transport := NewHTTPTransport("http://example.com")
 
 		// Create a request that can't be marshaled to JSON
 		// Use a function value which can't be marshaled to JSON
@@ -140,7 +140,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 
 	t.Run("http.NewRequestWithContext error", func(t *testing.T) {
 		// Create a transport with an invalid URL that will cause NewRequestWithContext to fail
-		transport := NewHTTPTransport("http://[::1]:namedport", nil)
+		transport := NewHTTPTransport("http://[::1]:namedport")
 
 		request := &JSONRPCRequest{
 			Version: "2.0",
@@ -175,7 +175,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		transport := NewHTTPTransport(server.URL, nil)
+		transport := NewHTTPTransport(server.URL)
 		request := &JSONRPCRequest{
 			Version: "2.0",
 			ID:      NewID(1),
@@ -202,7 +202,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 	})
 
 	t.Run("invalid URL", func(t *testing.T) {
-		transport := NewHTTPTransport("invalid-url", nil)
+		transport := NewHTTPTransport("invalid-url")
 		request := &JSONRPCRequest{
 			Version: "2.0",
 			ID:      NewID(1),
@@ -233,7 +233,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		transport := NewHTTPTransport(server.URL, nil)
+		transport := NewHTTPTransport(server.URL)
 		request := &JSONRPCRequest{
 			Version: "2.0",
 			ID:      NewID(1),
@@ -266,7 +266,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		transport := NewHTTPTransport(server.URL, nil)
+		transport := NewHTTPTransport(server.URL)
 		request := &JSONRPCRequest{
 			Version: "2.0",
 			ID:      NewID(1),
@@ -303,7 +303,7 @@ func TestHTTPTransportErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		transport := NewHTTPTransport(server.URL, nil)
+		transport := NewHTTPTransport(server.URL)
 		request := &JSONRPCRequest{
 			Version: "2.0",
 			ID:      NewID(1),
@@ -386,4 +386,205 @@ func TestHTTPTransportWithCustomClient(t *testing.T) {
 	if result["result"] != "success" {
 		t.Errorf("expected result: success, got: %s", result["result"])
 	}
+}
+
+func TestHTTPTransportOptions(t *testing.T) {
+	t.Run("WithHTTPClient", func(t *testing.T) {
+		// Create a test HTTP server
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Send response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"result":"success"}}`))
+		}))
+		defer server.Close()
+
+		// Create a custom HTTP client with a timeout
+		customClient := &http.Client{
+			Timeout: 500 * time.Millisecond,
+		}
+
+		// Create HTTP transport with the custom client using WithHTTPClient option
+		transport := NewHTTPTransport(server.URL, WithHTTPClient(customClient))
+
+		// Verify that the custom client was set
+		if transport.client != customClient {
+			t.Errorf("expected client to be set to customClient")
+		}
+
+		request := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method",
+		}
+		response := &JSONRPCResponse{
+			ID: request.ID.New(),
+		}
+
+		// Send request
+		err := transport.SendRequest(context.Background(), request, response)
+		if err != nil {
+			t.Fatalf("SendRequest error: %v", err)
+		}
+
+		// Verify response
+		var result map[string]string
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("result decode error: %v", err)
+		}
+
+		if result["result"] != "success" {
+			t.Errorf("expected result: success, got: %s", result["result"])
+		}
+	})
+
+	t.Run("WithHTTPHeaders", func(t *testing.T) {
+		// Create a test HTTP server that verifies headers
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Verify custom headers
+			if r.Header.Get("X-API-Key") != "test-api-key" {
+				t.Errorf("expected X-API-Key: test-api-key, got: %s", r.Header.Get("X-API-Key"))
+			}
+			if r.Header.Get("X-Custom-Header") != "custom-value" {
+				t.Errorf("expected X-Custom-Header: custom-value, got: %s", r.Header.Get("X-Custom-Header"))
+			}
+
+			// Send response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"result":"success"}}`))
+		}))
+		defer server.Close()
+
+		// Create custom headers
+		headers := map[string]string{
+			"X-API-Key":       "test-api-key",
+			"X-Custom-Header": "custom-value",
+		}
+
+		// Create HTTP transport with custom headers using WithHTTPHeaders option
+		transport := NewHTTPTransport(server.URL, WithHTTPHeaders(headers))
+
+		// Verify that the headers were set
+		if len(transport.headers) != 2 {
+			t.Errorf("expected 2 headers, got: %d", len(transport.headers))
+		}
+		if transport.headers["X-API-Key"] != "test-api-key" {
+			t.Errorf("expected X-API-Key: test-api-key, got: %s", transport.headers["X-API-Key"])
+		}
+		if transport.headers["X-Custom-Header"] != "custom-value" {
+			t.Errorf("expected X-Custom-Header: custom-value, got: %s", transport.headers["X-Custom-Header"])
+		}
+
+		request := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method",
+		}
+		response := &JSONRPCResponse{
+			ID: request.ID.New(),
+		}
+
+		// Send request
+		err := transport.SendRequest(context.Background(), request, response)
+		if err != nil {
+			t.Fatalf("SendRequest error: %v", err)
+		}
+	})
+
+	t.Run("Multiple options", func(t *testing.T) {
+		// Create a test HTTP server that verifies headers
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Verify custom headers
+			if r.Header.Get("X-API-Key") != "test-api-key" {
+				t.Errorf("expected X-API-Key: test-api-key, got: %s", r.Header.Get("X-API-Key"))
+			}
+
+			// Send response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"result":"success"}}`))
+		}))
+		defer server.Close()
+
+		// Create a custom HTTP client with a timeout
+		customClient := &http.Client{
+			Timeout: 500 * time.Millisecond,
+		}
+
+		// Create custom headers
+		headers := map[string]string{
+			"X-API-Key": "test-api-key",
+		}
+
+		// Create HTTP transport with both custom client and headers
+		transport := NewHTTPTransport(
+			server.URL,
+			WithHTTPClient(customClient),
+			WithHTTPHeaders(headers),
+		)
+
+		// Verify that both options were applied
+		if transport.client != customClient {
+			t.Errorf("expected client to be set to customClient")
+		}
+		if len(transport.headers) != 1 {
+			t.Errorf("expected 1 header, got: %d", len(transport.headers))
+		}
+		if transport.headers["X-API-Key"] != "test-api-key" {
+			t.Errorf("expected X-API-Key: test-api-key, got: %s", transport.headers["X-API-Key"])
+		}
+
+		request := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method",
+		}
+		response := &JSONRPCResponse{
+			ID: request.ID.New(),
+		}
+
+		// Send request
+		err := transport.SendRequest(context.Background(), request, response)
+		if err != nil {
+			t.Fatalf("SendRequest error: %v", err)
+		}
+	})
+
+	t.Run("No options", func(t *testing.T) {
+		// Create a test HTTP server
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Send response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"result":"success"}}`))
+		}))
+		defer server.Close()
+
+		// Create HTTP transport with no options
+		transport := NewHTTPTransport(server.URL)
+
+		// Verify default client was created
+		if transport.client == nil {
+			t.Errorf("expected default client to be created")
+		}
+		if transport.headers != nil {
+			t.Errorf("expected headers to be nil, got: %v", transport.headers)
+		}
+
+		request := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method",
+		}
+		response := &JSONRPCResponse{
+			ID: request.ID.New(),
+		}
+
+		// Send request
+		err := transport.SendRequest(context.Background(), request, response)
+		if err != nil {
+			t.Fatalf("SendRequest error: %v", err)
+		}
+	})
 }

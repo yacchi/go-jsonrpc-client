@@ -21,13 +21,32 @@ type HTTPTransport struct {
 	headers map[string]string
 }
 
+type HTTPTransportOption func(*HTTPTransport)
+
+// WithHTTPClient sets the HTTP client for the transport
+func WithHTTPClient(client *http.Client) HTTPTransportOption {
+	return func(t *HTTPTransport) {
+		t.client = client
+	}
+}
+
+// WithHTTPHeaders sets the HTTP headers for the transport
+func WithHTTPHeaders(headers map[string]string) HTTPTransportOption {
+	return func(t *HTTPTransport) {
+		t.headers = headers
+	}
+}
+
 // NewHTTPTransport creates a transport for sending JSON-RPC requests via HTTP
-func NewHTTPTransport(baseURL string, headers map[string]string) *HTTPTransport {
-	return &HTTPTransport{
+func NewHTTPTransport(baseURL string, opts ...HTTPTransportOption) *HTTPTransport {
+	t := &HTTPTransport{
 		client:  &http.Client{},
 		baseURL: baseURL,
-		headers: headers,
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // SendRequest sends a JSON-RPC request via HTTP
