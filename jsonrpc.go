@@ -8,6 +8,14 @@ import (
 type IDValue struct {
 	strVar *string
 	intVar *int
+	isNull bool // nullを明示的に表現するためのフラグ
+}
+
+// NewNullID creates a new IDValue that explicitly represents null
+func NewNullID() *IDValue {
+	return &IDValue{
+		isNull: true,
+	}
 }
 
 // NewID creates a new IDValue from a string or integer value
@@ -47,7 +55,12 @@ func (i *IDValue) String() string {
 
 // IsZero checks if the ID value is zero/empty
 func (i *IDValue) IsZero() bool {
-	return i.strVar == nil && i.intVar == nil
+	return (i.strVar == nil && i.intVar == nil) && !i.isNull
+}
+
+// IsExplicitlyNull checks if the ID is explicitly set to null
+func (i *IDValue) IsExplicitlyNull() bool {
+	return i != nil && i.isNull
 }
 
 // Value returns the string or integer value of the ID
@@ -82,18 +95,21 @@ func (i *IDValue) UnmarshalJSON(bytes []byte) error {
 	if string(bytes) == "null" {
 		i.strVar = nil
 		i.intVar = nil
+		i.isNull = true
 		return nil
 	}
 
 	var str string
 	if err := json.Unmarshal(bytes, &str); err == nil {
 		i.strVar = &str
+		i.isNull = false
 		return nil
 	}
 
 	var intValue int
 	if err := json.Unmarshal(bytes, &intValue); err == nil {
 		i.intVar = &intValue
+		i.isNull = false
 		return nil
 	}
 
@@ -102,6 +118,9 @@ func (i *IDValue) UnmarshalJSON(bytes []byte) error {
 
 // MarshalJSON serializes the ID value to JSON
 func (i *IDValue) MarshalJSON() ([]byte, error) {
+	if i.isNull {
+		return json.Marshal(nil)
+	}
 	if i.strVar != nil {
 		return json.Marshal(*i.strVar)
 	}

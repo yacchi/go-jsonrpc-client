@@ -1175,6 +1175,116 @@ func TestInvokeBatch(t *testing.T) {
 	})
 }
 
+// TestAsNotification tests the AsNotification helper function
+func TestAsNotification(t *testing.T) {
+	t.Run("with notification request", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
+				// Verify that the request ID is explicitly null
+				if request.ID == nil || !request.ID.IsExplicitlyNull() {
+					t.Errorf("expected ID to be explicitly null, got: %v", request.ID)
+				}
+
+				// No response expected for notifications
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request type
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+
+		// Create notification request
+		invoke := &Invoke[TestRequest, Omit]{
+			Name:    "test.notification",
+			Request: TestRequest{Param: "test"},
+		}
+
+		// Use AsNotification helper
+		err := client.Invoke(context.Background(), AsNotification(invoke))
+		if err != nil {
+			t.Fatalf("Invoke error: %v", err)
+		}
+	})
+
+	t.Run("with batch notification request", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify batch flag
+				if !input.Batch {
+					t.Errorf("expected batch flag to be true")
+				}
+
+				// Verify requests
+				if len(input.Requests) != 2 {
+					t.Errorf("expected 2 requests, got: %d", len(input.Requests))
+					return nil, errors.New("invalid request count")
+				}
+
+				// Verify that the first request ID is explicitly null
+				if input.Requests[0].ID == nil || !input.Requests[0].ID.IsExplicitlyNull() {
+					t.Errorf("expected first request ID to be explicitly null, got: %v", input.Requests[0].ID)
+				}
+
+				// Set response for the second request only
+				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+				response := &JSONRPCResponse{
+					ID:     input.Requests[1].ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers - first one is a notification
+		invoke1 := &Invoke[TestRequest, Omit]{
+			Name:    "test.notification",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation with notification
+		err := client.InvokeBatch(context.Background(), []MethodCaller{AsNotification(invoke1), invoke2})
+		if err != nil {
+			t.Fatalf("InvokeBatch error: %v", err)
+		}
+
+		// Verify response for the second request
+		if invoke2.Response.Result != "success" {
+			t.Errorf("expected result2: success, got: %s", invoke2.Response.Result)
+		}
+	})
+}
+
 // TestInvokeJSONRPCRequest tests the JSONRPCRequest method of Invoke
 func TestInvokeJSONRPCRequest(t *testing.T) {
 	t.Run("with regular request", func(t *testing.T) {

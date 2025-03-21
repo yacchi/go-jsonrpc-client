@@ -38,6 +38,12 @@ func WithSequenceIDGenerator() ClientOption {
 	})
 }
 
+// AsNotification sets an Invoke to be sent as a notification (with null ID)
+func AsNotification[Tin any, Tout any](invoke *Invoke[Tin, Tout]) *Invoke[Tin, Tout] {
+	invoke.ID = NewNullID()
+	return invoke
+}
+
 // NewClient creates a new JSON-RPC client
 func NewClient(transport Transport, opts ...ClientOption) *Client {
 	c := &Client{
@@ -101,6 +107,10 @@ func (i *Invoke[Tin, Tout]) Unmarshal(resp *JSONRPCResponse) error {
 func (c *Client) Invoke(ctx context.Context, req MethodCaller) error {
 	// Get request information
 	request := req.JSONRPCRequest()
+
+	// Check if this is a notification request (ID is explicitly null)
+	isNotification := request.ID.IsExplicitlyNull()
+
 	if request.ID == nil {
 		// Generate a new ID if ID is nil
 		request.ID = c.generateId()
@@ -115,6 +125,11 @@ func (c *Client) Invoke(ctx context.Context, req MethodCaller) error {
 	output, err := c.transport.SendRequest(ctx, input)
 	if err != nil {
 		return err // already wrapped in an appropriate error type
+	}
+
+	// For notification requests, no response is expected
+	if isNotification {
+		return nil
 	}
 
 	if output == nil || len(output.Responses) == 0 {
@@ -181,8 +196,15 @@ func (c *Client) InvokeBatch(ctx context.Context, reqs []MethodCaller) error {
 	// Process response for each request
 	for i, req := range reqs {
 		request := requests[i]
-		if request.ID == nil {
+
+		// Check if this is a notification request (ID is explicitly null)
+		if request.ID.IsExplicitlyNull() {
 			// No response expected for notifications
+			continue
+		}
+
+		if request.ID == nil {
+			// This should not happen as we generate IDs for non-notification requests
 			continue
 		}
 

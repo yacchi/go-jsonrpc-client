@@ -294,8 +294,8 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
 	}
-	if !id4.IsZero() {
-		t.Errorf("ID should be zero after unmarshaling null, got: %v", id4)
+	if !id4.IsExplicitlyNull() {
+		t.Errorf("ID should be explicitly null after unmarshaling null, got: %v", id4)
 	}
 
 	// Deserialize empty string
@@ -367,6 +367,34 @@ func TestJSONRPCError(t *testing.T) {
 	expectedWithData := "JSON-RPC Error -32602: Invalid params"
 	if errWithData.Error() != expectedWithData {
 		t.Errorf("expected error message: %s, got: %s", expectedWithData, errWithData.Error())
+	}
+}
+
+func TestNewNullID(t *testing.T) {
+	id := NewNullID()
+
+	if !id.IsExplicitlyNull() {
+		t.Error("NewNullID() should create an ID that is explicitly null")
+	}
+
+	// Test serialization
+	bytes, err := id.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON error: %v", err)
+	}
+
+	if string(bytes) != "null" {
+		t.Errorf("expected JSON: null, got: %s", string(bytes))
+	}
+
+	// Test that it's recognized as null in String()
+	if id.String() != "null" {
+		t.Errorf("expected String(): null, got: %s", id.String())
+	}
+
+	// Test that Value() returns nil
+	if id.Value() != nil {
+		t.Errorf("expected Value(): nil, got: %v", id.Value())
 	}
 }
 
