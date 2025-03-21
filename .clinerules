@@ -27,6 +27,37 @@ Goのパッケージは極力分割せずプロジェクトルートに格納し
 
 例: `go get -v ./... -run TestInvoke`
 
+### コミットメッセージ規約
+
+コミットメッセージは[Conventional Commits](https://www.conventionalcommits.org/)の形式に従います。
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+#### 主要なタイプ
+
+- `feat`: 新機能の追加
+- `fix`: バグ修正
+- `docs`: ドキュメントのみの変更
+- `style`: コードの意味に影響を与えない変更（空白、フォーマット、セミコロンの欠落など）
+- `refactor`: バグ修正でも機能追加でもないコード変更
+- `perf`: パフォーマンスを向上させるコード変更
+- `test`: 不足しているテストの追加や既存のテストの修正
+- `chore`: ビルドプロセスやドキュメント生成などの補助ツールやライブラリの変更
+
+#### 例
+
+```
+feat: HTTPTransportにオプション機能を追加
+fix: クライアント接続エラー処理の修正
+test: HTTPTransportオプションのテスト追加
+```
+
 ### 基本的なコマンド
 
 Lint、フォーマット、テストなどは開発者と同じ操作ができるようにMakefileを経由して実行します。
