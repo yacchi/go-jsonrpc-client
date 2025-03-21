@@ -1,0 +1,39 @@
+# Coding Rules for AI Agents
+
+## Project language
+This project prioritizes convenience as OSS, and comments and documentation for users should be generated in English, no matter what language is entered at the prompt.
+
+## ディレクトリ配置規則
+Goのパッケージは極力分割せずプロジェクトルートに格納して下さい。
+
+- docs/     # ドキュメント
+- examples/ # サンプル
+
+## 実装方針
+
+### 全般
+- 原則go.modに記載されたGoのバージョンで利用可能なライブラリを利用します。
+- 
+
+### テスト駆動開発
+テスト駆動開発(TDD)にて開発します。
+
+1. Red: 失敗するテストを作成
+2. Green: 1で作成したテストが成功する為の実装を行う
+3. Refactor: リファクタリングを行いコードを改善する
+
+### 基本的なスクリプト
+
+Lint、フォーマット、テストなどは開発者と同じ操作ができるようにMakefileを経由して実行します。
+足りないコマンドがあれば開発者に相談して下さい。 
+
+```bash
+$ make help
+Usage: make [target]
+
+Targets:
+  clean    Remove build artifacts
+  format   Format the source code
+  lint     Lint the source code
+  test     Run tests
+```
