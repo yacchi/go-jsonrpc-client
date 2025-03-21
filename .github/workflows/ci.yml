@@ -46,6 +46,7 @@ jobs:
         name: coverage-report
         path: coverage.out
         if-no-files-found: ignore
+        overwrite: true
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
