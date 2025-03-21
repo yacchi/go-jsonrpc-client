@@ -67,6 +67,13 @@ func (i *IDValue) Equal(other any) bool {
 
 // UnmarshalJSON deserializes the ID value from JSON
 func (i *IDValue) UnmarshalJSON(bytes []byte) error {
+	// Handle null value
+	if string(bytes) == "null" {
+		i.String = nil
+		i.Int = nil
+		return nil
+	}
+
 	var str string
 	if err := json.Unmarshal(bytes, &str); err == nil {
 		i.String = &str
