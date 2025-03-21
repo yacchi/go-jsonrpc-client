@@ -46,3 +46,4 @@ test-coverage-report:
 test-coverage-func:
 	go test -v -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
+

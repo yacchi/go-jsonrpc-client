@@ -2,6 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/yacchi/go-jsonrpc-client.svg)](https://pkg.go.dev/github.com/yacchi/go-jsonrpc-client)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yacchi/go-jsonrpc-client)](https://goreportcard.com/report/github.com/yacchi/go-jsonrpc-client)
+[![codecov](https://codecov.io/gh/yacchi/go-jsonrpc-client/branch/main/graph/badge.svg)](https://codecov.io/gh/yacchi/go-jsonrpc-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A type-safe JSON-RPC 2.0 client implementation for Go.
