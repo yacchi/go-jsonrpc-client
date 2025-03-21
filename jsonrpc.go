@@ -6,24 +6,24 @@ import (
 )
 
 type IDValue struct {
-	String *string
-	Int    *int
+	strVar *string
+	intVar *int
 }
 
 // NewID creates a new IDValue from a string or integer value
 func NewID[T ~string | ~int | ~int32 | ~uint32](id T) *IDValue {
 	switch v := any(id).(type) {
 	case string:
-		return &IDValue{String: &v}
+		return &IDValue{strVar: &v}
 	case int:
 		intValue := v
-		return &IDValue{Int: &intValue}
+		return &IDValue{intVar: &intValue}
 	case int32:
 		intValue := int(v)
-		return &IDValue{Int: &intValue}
+		return &IDValue{intVar: &intValue}
 	case uint32:
 		intValue := int(v)
-		return &IDValue{Int: &intValue}
+		return &IDValue{intVar: &intValue}
 	default:
 		panic(fmt.Sprintf("unsupported ID type: %T", id))
 	}
@@ -34,18 +34,29 @@ func (i *IDValue) New() *IDValue {
 	return &IDValue{}
 }
 
+// String returns the string value of the ID
+func (i *IDValue) String() string {
+	if i.strVar != nil {
+		return *i.strVar
+	}
+	if i.intVar != nil {
+		return fmt.Sprintf("%d", *i.intVar)
+	}
+	return "null"
+}
+
 // IsZero checks if the ID value is zero/empty
 func (i *IDValue) IsZero() bool {
-	return i.String == nil && i.Int == nil
+	return i.strVar == nil && i.intVar == nil
 }
 
 // Value returns the string or integer value of the ID
 func (i *IDValue) Value() any {
-	if i.String != nil {
-		return *i.String
+	if i.strVar != nil {
+		return *i.strVar
 	}
-	if i.Int != nil {
-		return *i.Int
+	if i.intVar != nil {
+		return *i.intVar
 	}
 	return nil
 }
@@ -56,10 +67,10 @@ func (i *IDValue) Equal(other any) bool {
 		return false
 	}
 	switch o := other.(*IDValue); {
-	case i.String != nil && o.String != nil:
-		return *i.String == *o.String
-	case i.Int != nil && o.Int != nil:
-		return *i.Int == *o.Int
+	case i.strVar != nil && o.strVar != nil:
+		return *i.strVar == *o.strVar
+	case i.intVar != nil && o.intVar != nil:
+		return *i.intVar == *o.intVar
 	default:
 		return false
 	}
@@ -69,20 +80,20 @@ func (i *IDValue) Equal(other any) bool {
 func (i *IDValue) UnmarshalJSON(bytes []byte) error {
 	// Handle null value
 	if string(bytes) == "null" {
-		i.String = nil
-		i.Int = nil
+		i.strVar = nil
+		i.intVar = nil
 		return nil
 	}
 
 	var str string
 	if err := json.Unmarshal(bytes, &str); err == nil {
-		i.String = &str
+		i.strVar = &str
 		return nil
 	}
 
 	var intValue int
 	if err := json.Unmarshal(bytes, &intValue); err == nil {
-		i.Int = &intValue
+		i.intVar = &intValue
 		return nil
 	}
 
@@ -91,11 +102,11 @@ func (i *IDValue) UnmarshalJSON(bytes []byte) error {
 
 // MarshalJSON serializes the ID value to JSON
 func (i *IDValue) MarshalJSON() ([]byte, error) {
-	if i.String != nil {
-		return json.Marshal(*i.String)
+	if i.strVar != nil {
+		return json.Marshal(*i.strVar)
 	}
-	if i.Int != nil {
-		return json.Marshal(*i.Int)
+	if i.intVar != nil {
+		return json.Marshal(*i.intVar)
 	}
 	return json.Marshal(nil)
 }

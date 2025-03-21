@@ -49,7 +49,7 @@ func TestNewClient(t *testing.T) {
 		}
 
 		id := client.generateId()
-		if id.String == nil || *id.String != "custom-id" {
+		if id.strVar == nil || *id.strVar != "custom-id" {
 			t.Errorf("expected ID: custom-id, got: %v", id)
 		}
 	})
@@ -67,15 +67,15 @@ func TestWithSequenceIDGenerator(t *testing.T) {
 		id3 := client.generateId()
 
 		// Check that IDs are sequential integers
-		if id1.Int == nil || *id1.Int != 1 {
+		if id1.intVar == nil || *id1.intVar != 1 {
 			t.Errorf("expected first ID to be 1, got: %v", id1)
 		}
 
-		if id2.Int == nil || *id2.Int != 2 {
+		if id2.intVar == nil || *id2.intVar != 2 {
 			t.Errorf("expected second ID to be 2, got: %v", id2)
 		}
 
-		if id3.Int == nil || *id3.Int != 3 {
+		if id3.intVar == nil || *id3.intVar != 3 {
 			t.Errorf("expected third ID to be 3, got: %v", id3)
 		}
 	})
@@ -96,13 +96,13 @@ func TestWithSequenceIDGenerator(t *testing.T) {
 
 		// Generate ID at MaxInt32 + 1
 		id1 := client.generateId()
-		if id1.Int == nil {
+		if id1.intVar == nil {
 			t.Fatalf("ID is nil")
 		}
 
 		// This should be math.MaxInt32 + 1
-		if *id1.Int != math.MaxInt32+1 {
-			t.Errorf("expected ID to be MaxInt32+1, got: %d", *id1.Int)
+		if *id1.intVar != math.MaxInt32+1 {
+			t.Errorf("expected ID to be MaxInt32+1, got: %d", *id1.intVar)
 		}
 
 		// Now test the actual WithSequenceIDGenerator reset logic
@@ -131,7 +131,7 @@ func TestWithSequenceIDGenerator(t *testing.T) {
 
 		// The next ID after reset should be 1
 		resetID := client.generateId()
-		if resetID.Int == nil || *resetID.Int != 1 {
+		if resetID.intVar == nil || *resetID.intVar != 1 {
 			t.Errorf("expected ID after reset to be 1, got: %v", resetID)
 		}
 	})
@@ -486,7 +486,7 @@ func TestInvoke(t *testing.T) {
 		transport := &MockTransport{
 			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
 				// Verify request ID
-				if request.ID.String == nil || *request.ID.String != "custom-id" {
+				if request.ID.strVar == nil || *request.ID.strVar != "custom-id" {
 					t.Errorf("expected ID: custom-id, got: %v", request.ID)
 				}
 

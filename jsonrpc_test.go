@@ -8,64 +8,64 @@ import (
 func TestNewID(t *testing.T) {
 	t.Run("string ID", func(t *testing.T) {
 		id := NewID("test-id")
-		if id.String == nil || *id.String != "test-id" {
+		if id.strVar == nil || *id.strVar != "test-id" {
 			t.Errorf("expected ID: test-id, got: %v", id)
 		}
-		if id.Int != nil {
-			t.Errorf("Int value is not nil: %v", *id.Int)
+		if id.intVar != nil {
+			t.Errorf("Int value is not nil: %v", *id.intVar)
 		}
 	})
 
 	t.Run("integer ID", func(t *testing.T) {
 		id := NewID(42)
-		if id.Int == nil || *id.Int != 42 {
+		if id.intVar == nil || *id.intVar != 42 {
 			t.Errorf("expected ID: 42, got: %v", id)
 		}
-		if id.String != nil {
-			t.Errorf("String value is not nil: %v", *id.String)
+		if id.strVar != nil {
+			t.Errorf("String value is not nil: %v", *id.strVar)
 		}
 	})
 
 	t.Run("int32 ID", func(t *testing.T) {
 		var val int32 = 42
 		id := NewID(val)
-		if id.Int == nil || *id.Int != 42 {
+		if id.intVar == nil || *id.intVar != 42 {
 			t.Errorf("expected ID: 42, got: %v", id)
 		}
-		if id.String != nil {
-			t.Errorf("String value is not nil: %v", *id.String)
+		if id.strVar != nil {
+			t.Errorf("String value is not nil: %v", *id.strVar)
 		}
 	})
 
 	t.Run("uint32 ID", func(t *testing.T) {
 		var val uint32 = 42
 		id := NewID(val)
-		if id.Int == nil || *id.Int != 42 {
+		if id.intVar == nil || *id.intVar != 42 {
 			t.Errorf("expected ID: 42, got: %v", id)
 		}
-		if id.String != nil {
-			t.Errorf("String value is not nil: %v", *id.String)
+		if id.strVar != nil {
+			t.Errorf("String value is not nil: %v", *id.strVar)
 		}
 	})
 
 	t.Run("zero values", func(t *testing.T) {
 		// Test with zero string
 		id := NewID("")
-		if id.String == nil || *id.String != "" {
+		if id.strVar == nil || *id.strVar != "" {
 			t.Errorf("expected empty string ID, got: %v", id)
 		}
 
 		// Test with zero int
 		id = NewID(0)
-		if id.Int == nil || *id.Int != 0 {
+		if id.intVar == nil || *id.intVar != 0 {
 			t.Errorf("expected zero int ID, got: %v", id)
 		}
 	})
 }
 
 func TestJsonrpcIDNew(t *testing.T) {
-	id := &IDValue{String: new(string)}
-	*id.String = "test-id"
+	id := &IDValue{strVar: new(string)}
+	*id.strVar = "test-id"
 
 	newID := id.New()
 	if newID == nil {
@@ -73,25 +73,25 @@ func TestJsonrpcIDNew(t *testing.T) {
 	}
 
 	// New ID should be empty
-	if newID.String != nil {
-		t.Errorf("String value is not nil: %v", *newID.String)
+	if newID.strVar != nil {
+		t.Errorf("String value is not nil: %v", *newID.strVar)
 	}
-	if newID.Int != nil {
-		t.Errorf("Int value is not nil: %v", *newID.Int)
+	if newID.intVar != nil {
+		t.Errorf("Int value is not nil: %v", *newID.intVar)
 	}
 }
 
 func TestJsonrpcIDIsZero(t *testing.T) {
 	// For string ID
-	strID := &IDValue{String: new(string)}
-	*strID.String = "test-id"
+	strID := &IDValue{strVar: new(string)}
+	*strID.strVar = "test-id"
 	if strID.IsZero() {
 		t.Error("string ID was evaluated as zero")
 	}
 
 	// For integer ID
-	intID := &IDValue{Int: new(int)}
-	*intID.Int = 42
+	intID := &IDValue{intVar: new(int)}
+	*intID.intVar = 42
 	if intID.IsZero() {
 		t.Error("integer ID was evaluated as zero")
 	}
@@ -103,15 +103,15 @@ func TestJsonrpcIDIsZero(t *testing.T) {
 	}
 
 	// For zero string value
-	zeroStrID := &IDValue{String: new(string)}
-	*zeroStrID.String = ""
+	zeroStrID := &IDValue{strVar: new(string)}
+	*zeroStrID.strVar = ""
 	if zeroStrID.IsZero() {
 		t.Error("empty string ID was evaluated as zero, but should not be")
 	}
 
 	// For zero int value
-	zeroIntID := &IDValue{Int: new(int)}
-	*zeroIntID.Int = 0
+	zeroIntID := &IDValue{intVar: new(int)}
+	*zeroIntID.intVar = 0
 	if zeroIntID.IsZero() {
 		t.Error("zero int ID was evaluated as zero, but should not be")
 	}
@@ -119,33 +119,33 @@ func TestJsonrpcIDIsZero(t *testing.T) {
 
 func TestJsonrpcIDEqual(t *testing.T) {
 	// Compare same string IDs
-	id1 := &IDValue{String: new(string)}
-	*id1.String = "test-id"
-	id2 := &IDValue{String: new(string)}
-	*id2.String = "test-id"
+	id1 := &IDValue{strVar: new(string)}
+	*id1.strVar = "test-id"
+	id2 := &IDValue{strVar: new(string)}
+	*id2.strVar = "test-id"
 	if !id1.Equal(id2) {
 		t.Error("same string IDs are not equal")
 	}
 
 	// Compare different string IDs
-	id3 := &IDValue{String: new(string)}
-	*id3.String = "different-id"
+	id3 := &IDValue{strVar: new(string)}
+	*id3.strVar = "different-id"
 	if id1.Equal(id3) {
 		t.Error("different string IDs are considered equal")
 	}
 
 	// Compare same integer IDs
-	id4 := &IDValue{Int: new(int)}
-	*id4.Int = 42
-	id5 := &IDValue{Int: new(int)}
-	*id5.Int = 42
+	id4 := &IDValue{intVar: new(int)}
+	*id4.intVar = 42
+	id5 := &IDValue{intVar: new(int)}
+	*id5.intVar = 42
 	if !id4.Equal(id5) {
 		t.Error("same integer IDs are not equal")
 	}
 
 	// Compare different integer IDs
-	id6 := &IDValue{Int: new(int)}
-	*id6.Int = 100
+	id6 := &IDValue{intVar: new(int)}
+	*id6.intVar = 100
 	if id4.Equal(id6) {
 		t.Error("different integer IDs are considered equal")
 	}
@@ -172,8 +172,8 @@ func TestJsonrpcIDEqual(t *testing.T) {
 
 func TestJsonrpcIDMarshalJSON(t *testing.T) {
 	// Serialize string ID
-	id1 := &IDValue{String: new(string)}
-	*id1.String = "test-id"
+	id1 := &IDValue{strVar: new(string)}
+	*id1.strVar = "test-id"
 	bytes, err := id1.MarshalJSON()
 	if err != nil {
 		t.Fatalf("MarshalJSON error: %v", err)
@@ -184,8 +184,8 @@ func TestJsonrpcIDMarshalJSON(t *testing.T) {
 	}
 
 	// Serialize integer ID
-	id2 := &IDValue{Int: new(int)}
-	*id2.Int = 42
+	id2 := &IDValue{intVar: new(int)}
+	*id2.intVar = 42
 	bytes, err = id2.MarshalJSON()
 	if err != nil {
 		t.Fatalf("MarshalJSON error: %v", err)
@@ -207,8 +207,8 @@ func TestJsonrpcIDMarshalJSON(t *testing.T) {
 	}
 
 	// Serialize zero string ID
-	id4 := &IDValue{String: new(string)}
-	*id4.String = ""
+	id4 := &IDValue{strVar: new(string)}
+	*id4.strVar = ""
 	bytes, err = id4.MarshalJSON()
 	if err != nil {
 		t.Fatalf("MarshalJSON error: %v", err)
@@ -219,8 +219,8 @@ func TestJsonrpcIDMarshalJSON(t *testing.T) {
 	}
 
 	// Serialize zero int ID
-	id5 := &IDValue{Int: new(int)}
-	*id5.Int = 0
+	id5 := &IDValue{intVar: new(int)}
+	*id5.intVar = 0
 	bytes, err = id5.MarshalJSON()
 	if err != nil {
 		t.Fatalf("MarshalJSON error: %v", err)
@@ -238,11 +238,11 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
 	}
-	if id1.String == nil || *id1.String != "test-id" {
+	if id1.strVar == nil || *id1.strVar != "test-id" {
 		t.Errorf("expected string ID: test-id, got: %v", id1)
 	}
-	if id1.Int != nil {
-		t.Errorf("Int value is not nil: %v", *id1.Int)
+	if id1.intVar != nil {
+		t.Errorf("Int value is not nil: %v", *id1.intVar)
 	}
 
 	// Deserialize integer ID
@@ -251,11 +251,11 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
 	}
-	if id2.Int == nil || *id2.Int != 42 {
+	if id2.intVar == nil || *id2.intVar != 42 {
 		t.Errorf("expected integer ID: 42, got: %v", id2)
 	}
-	if id2.String != nil {
-		t.Errorf("String value is not nil: %v", *id2.String)
+	if id2.strVar != nil {
+		t.Errorf("String value is not nil: %v", *id2.strVar)
 	}
 
 	// Deserialize invalid JSON
@@ -266,8 +266,8 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	}
 
 	// Deserialize null - now the implementation handles null specially
-	id4 := &IDValue{String: new(string)}
-	*id4.String = "test-id"
+	id4 := &IDValue{strVar: new(string)}
+	*id4.strVar = "test-id"
 	err = id4.UnmarshalJSON([]byte(`null`))
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
@@ -282,7 +282,7 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
 	}
-	if id5.String == nil || *id5.String != "" {
+	if id5.strVar == nil || *id5.strVar != "" {
 		t.Errorf("expected empty string ID, got: %v", id5)
 	}
 
@@ -292,7 +292,7 @@ func TestJsonrpcIDUnmarshalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnmarshalJSON error: %v", err)
 	}
-	if id6.Int == nil || *id6.Int != 0 {
+	if id6.intVar == nil || *id6.intVar != 0 {
 		t.Errorf("expected zero int ID, got: %v", id6)
 	}
 }
@@ -319,7 +319,7 @@ func TestIDValueInJSON(t *testing.T) {
 	}
 
 	// Verify ID
-	if newReq.ID.String == nil || *newReq.ID.String != "test-id" {
+	if newReq.ID.strVar == nil || *newReq.ID.strVar != "test-id" {
 		t.Errorf("expected ID: test-id, got: %v", newReq.ID)
 	}
 }
@@ -370,7 +370,7 @@ func TestIDValue(t *testing.T) {
 			t.Fatalf("UnmarshalJSON error: %v", err)
 		}
 
-		if newID.String == nil || *newID.String != "another-id" {
+		if newID.strVar == nil || *newID.strVar != "another-id" {
 			t.Errorf("expected ID: another-id, got: %v", newID)
 		}
 
@@ -415,7 +415,7 @@ func TestIDValue(t *testing.T) {
 			t.Fatalf("UnmarshalJSON error: %v", err)
 		}
 
-		if newID.Int == nil || *newID.Int != 99 {
+		if newID.intVar == nil || *newID.intVar != 99 {
 			t.Errorf("expected ID: 99, got: %v", newID)
 		}
 
@@ -481,7 +481,7 @@ func TestJSONRPCRequest(t *testing.T) {
 	}
 
 	// Verify ID
-	if newReq.ID.Int == nil || *newReq.ID.Int != 1 {
+	if newReq.ID.intVar == nil || *newReq.ID.intVar != 1 {
 		t.Errorf("expected ID: 1, got: %v", newReq.ID)
 	}
 
