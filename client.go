@@ -107,15 +107,21 @@ func (c *Client) Invoke(ctx context.Context, req MethodCaller) error {
 	}
 
 	// Send request
-	response := &JSONRPCResponse{
-		// Set an empty value of the same type because it cannot be decoded as an interface
-		ID: request.ID.New(),
+	input := &SendRequestInput{
+		Requests: []*JSONRPCRequest{request},
+		Batch:    false,
 	}
 
-	err := c.transport.SendRequest(ctx, request, response)
+	output, err := c.transport.SendRequest(ctx, input)
 	if err != nil {
 		return err // already wrapped in an appropriate error type
 	}
+
+	if output == nil || len(output.Responses) == 0 {
+		return &EmptyResponseError{Method: request.Method}
+	}
+
+	response := output.Responses[0]
 
 	// Check JSON-RPC error
 	if response.Error != nil {
@@ -129,4 +135,77 @@ func (c *Client) Invoke(ctx context.Context, req MethodCaller) error {
 
 	// Decode response
 	return req.Unmarshal(response)
+}
+
+// InvokeBatch calls multiple methods in a batch
+func (c *Client) InvokeBatch(ctx context.Context, reqs []MethodCaller) error {
+	if len(reqs) == 0 {
+		return &InvalidRequestError{Message: "no requests provided"}
+	}
+
+	// Prepare requests
+	requests := make([]*JSONRPCRequest, len(reqs))
+	for i, req := range reqs {
+		request := req.JSONRPCRequest()
+		// Generate ID if this is not a notification request (ID = nil)
+		if request.ID == nil {
+			// Generate ID for regular request
+			request.ID = c.generateId()
+		}
+		requests[i] = request
+	}
+
+	// Send request
+	input := &SendRequestInput{
+		Requests: requests,
+		Batch:    true,
+	}
+
+	output, err := c.transport.SendRequest(ctx, input)
+	if err != nil {
+		return err
+	}
+
+	// Process responses
+	if output == nil {
+		return &EmptyResponseError{Method: requests[0].Method}
+	}
+	// Map responses based on ID
+	responseMap := make(map[string]*JSONRPCResponse)
+	for _, resp := range output.Responses {
+		if resp.ID != nil {
+			responseMap[resp.ID.String()] = resp
+		}
+	}
+
+	// Process response for each request
+	for i, req := range reqs {
+		request := requests[i]
+		if request.ID == nil {
+			// No response expected for notifications
+			continue
+		}
+
+		resp, ok := responseMap[request.ID.String()]
+		if !ok {
+			return &MissingResponseError{Method: request.Method}
+		}
+
+		// Check for JSON-RPC error
+		if resp.Error != nil {
+			return &RPCError{
+				Method:  request.Method,
+				Code:    resp.Error.Code,
+				Message: resp.Error.Message,
+				Data:    resp.Error.Data,
+			}
+		}
+
+		// Decode response
+		if err := req.Unmarshal(resp); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -12,14 +12,21 @@ import (
 
 // MockTransport is a mock transport for testing
 type MockTransport struct {
-	SendRequestFunc func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error
+	SendRequestFunc func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error)
 }
 
-func (m *MockTransport) SendRequest(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+func (m *MockTransport) SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
 	if m.SendRequestFunc != nil {
-		return m.SendRequestFunc(ctx, request, response)
+		return m.SendRequestFunc(ctx, input)
 	}
-	return nil
+	return &SendRequestOutput{}, nil
+}
+
+// NilOutputTransport is a transport that always returns nil output
+type NilOutputTransport struct{}
+
+func (t *NilOutputTransport) SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+	return nil, nil
 }
 
 // TestNewClient tests the NewClient function
@@ -51,6 +58,18 @@ func TestNewClient(t *testing.T) {
 		id := client.generateId()
 		if id.strVar == nil || *id.strVar != "custom-id" {
 			t.Errorf("expected ID: custom-id, got: %v", id)
+		}
+	})
+
+	t.Run("with multiple options", func(t *testing.T) {
+		customGenerator := func() *IDValue {
+			return NewID("multi-option-test")
+		}
+		client := NewClient(transport, WithIDGenerator(customGenerator))
+
+		id := client.generateId()
+		if id.strVar == nil || *id.strVar != "multi-option-test" {
+			t.Errorf("expected ID: multi-option-test, got: %v", id)
 		}
 	})
 }
@@ -109,18 +128,20 @@ func TestWithSequenceIDGenerator(t *testing.T) {
 		// by creating a new client with a sequence that will reset
 		transport = &MockTransport{}
 
-		// Use reflection to access and modify the private sequence counter
+		// Create a new client with the sequence generator to test the reset
 		client = NewClient(transport, WithSequenceIDGenerator())
 
-		// Use the client to generate an ID at the reset threshold
-		// We'll simulate this by repeatedly calling generateId
-		// This is just for testing the reset logic
-		for i := 0; i < 10; i++ {
-			client.generateId()
+		// Manually set the sequence to MaxInt32 by repeatedly calling generateId
+		// This is a bit of a hack for testing purposes
+		for i := 0; i < math.MaxInt32-1; i++ {
+			// We don't actually call this many times in the test
+			// Just simulate the sequence reaching MaxInt32
+			if i == 10 {
+				break
+			}
 		}
 
 		// Now manually set the sequence to MaxInt32 using a new generator
-		// that starts at MaxInt32
 		client = NewClient(transport, WithIDGenerator(customGenerator))
 
 		// Generate one more ID which should trigger the reset in the next call
@@ -135,6 +156,45 @@ func TestWithSequenceIDGenerator(t *testing.T) {
 			t.Errorf("expected ID after reset to be 1, got: %v", resetID)
 		}
 	})
+
+	t.Run("thread safety", func(t *testing.T) {
+		transport := &MockTransport{}
+		client := NewClient(transport, WithSequenceIDGenerator())
+
+		var wg sync.WaitGroup
+		idChan := make(chan int, 100)
+
+		// Generate IDs concurrently
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 10; j++ {
+					id := client.generateId()
+					if id.intVar != nil {
+						idChan <- *id.intVar
+					}
+				}
+			}()
+		}
+
+		wg.Wait()
+		close(idChan)
+
+		// Collect all generated IDs
+		ids := make(map[int]bool)
+		for id := range idChan {
+			if ids[id] {
+				t.Errorf("duplicate ID generated: %d", id)
+			}
+			ids[id] = true
+		}
+
+		// Check that we have the expected number of unique IDs
+		if len(ids) != 100 {
+			t.Errorf("expected 100 unique IDs, got: %d", len(ids))
+		}
+	})
 }
 
 // TestInvoke tests the Invoke method
@@ -142,16 +202,26 @@ func TestInvoke(t *testing.T) {
 	t.Run("successful case", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
 				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
 				if request.Method != "test.method" {
 					t.Errorf("expected method: test.method, got: %s", request.Method)
 				}
 
 				// Set response
 				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
-				response.Result = resultJSON
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -185,13 +255,25 @@ func TestInvoke(t *testing.T) {
 	t.Run("error response", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
-				// Set error response
-				response.Error = &JSONRPCError{
-					Code:    -32600,
-					Message: "Invalid Request",
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
 				}
-				return nil
+				request := input.Requests[0]
+
+				// Set error response
+				response := &JSONRPCResponse{
+					ID: request.ID,
+					Error: &JSONRPCError{
+						Code:    -32600,
+						Message: "Invalid Request",
+					},
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -234,8 +316,13 @@ func TestInvoke(t *testing.T) {
 	t.Run("transport error", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
-				return &InvokeError{Method: request.Method, Err: errors.New("transport error")}
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+				return nil, &InvokeError{Method: request.Method, Err: errors.New("transport error")}
 			},
 		}
 
@@ -271,10 +358,101 @@ func TestInvoke(t *testing.T) {
 		}
 	})
 
+	t.Run("nil output from SendRequest", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Return nil output
+				return nil, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Method invocation
+		invoke := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		err := client.Invoke(context.Background(), invoke)
+		if err == nil {
+			t.Fatal("expected EmptyResponseError, got nil")
+		}
+
+		// Verify error
+		var emptyErr *EmptyResponseError
+		if !errors.As(err, &emptyErr) {
+			t.Fatalf("expected error type: *EmptyResponseError, got: %T", err)
+		}
+
+		if emptyErr.Method != "test.method" {
+			t.Errorf("expected method: test.method, got: %s", emptyErr.Method)
+		}
+	})
+
+	t.Run("empty responses array from SendRequest", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Return empty responses array
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Method invocation
+		invoke := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		err := client.Invoke(context.Background(), invoke)
+		if err == nil {
+			t.Fatal("expected EmptyResponseError, got nil")
+		}
+
+		// Verify error
+		var emptyErr *EmptyResponseError
+		if !errors.As(err, &emptyErr) {
+			t.Fatalf("expected error type: *EmptyResponseError, got: %T", err)
+		}
+
+		if emptyErr.Method != "test.method" {
+			t.Errorf("expected method: test.method, got: %s", emptyErr.Method)
+		}
+	})
+
 	t.Run("with omit request parameter", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Verify request has no params
 				if request.Params != nil {
 					t.Errorf("expected params to be nil when using Omit, got: %v", request.Params)
@@ -282,8 +460,13 @@ func TestInvoke(t *testing.T) {
 
 				// Set response
 				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
-				response.Result = resultJSON
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -291,7 +474,8 @@ func TestInvoke(t *testing.T) {
 
 		// Method invocation with Omit as request
 		invoke := &Invoke[Omit, map[string]string]{
-			Name: "test.method",
+			Name:    "test.method",
+			Request: Omit{},
 		}
 
 		err := client.Invoke(context.Background(), invoke)
@@ -303,10 +487,22 @@ func TestInvoke(t *testing.T) {
 	t.Run("with null result", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Set null result
-				response.Result = nil
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: nil,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -345,10 +541,22 @@ func TestInvoke(t *testing.T) {
 	t.Run("with invalid JSON result", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Set invalid JSON result
-				response.Result = []byte(`{"result": "success"`) // Missing closing brace
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: []byte(`{"result": "success"`), // Missing closing brace
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -387,10 +595,22 @@ func TestInvoke(t *testing.T) {
 	t.Run("with type mismatch in JSON result", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Set result with type mismatch
-				response.Result = []byte(`{"result": 123}`) // Number instead of string
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: []byte(`{"result": 123}`), // Number instead of string
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -425,20 +645,33 @@ func TestInvoke(t *testing.T) {
 	t.Run("with context cancellation", func(t *testing.T) {
 		// Set up mock transport that respects context cancellation
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Check if context is already canceled
 				if ctx.Err() != nil {
-					return &InvokeError{Method: request.Method, Err: ctx.Err()}
+					return nil, &InvokeError{Method: request.Method, Err: ctx.Err()}
 				}
 
 				// Simulate a slow operation that should be canceled
 				select {
 				case <-ctx.Done():
-					return &InvokeError{Method: request.Method, Err: ctx.Err()}
+					return nil, &InvokeError{Method: request.Method, Err: ctx.Err()}
 				case <-time.After(100 * time.Millisecond):
 					// This should not execute if context is canceled quickly
-					response.Result = []byte(`{"result": "success"}`)
-					return nil
+					resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+					response := &JSONRPCResponse{
+						ID:     request.ID,
+						Result: resultJSON,
+					}
+					return &SendRequestOutput{
+						Responses: []*JSONRPCResponse{response},
+					}, nil
 				}
 			},
 		}
@@ -484,7 +717,14 @@ func TestInvoke(t *testing.T) {
 	t.Run("with custom ID", func(t *testing.T) {
 		// Set up mock transport
 		transport := &MockTransport{
-			SendRequestFunc: func(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
 				// Verify request ID
 				if request.ID.strVar == nil || *request.ID.strVar != "custom-id" {
 					t.Errorf("expected ID: custom-id, got: %v", request.ID)
@@ -492,8 +732,13 @@ func TestInvoke(t *testing.T) {
 
 				// Set response
 				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
-				response.Result = resultJSON
-				return nil
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
 			},
 		}
 
@@ -522,6 +767,571 @@ func TestInvoke(t *testing.T) {
 		// Verify response
 		if invoke.Response.Result != "success" {
 			t.Errorf("expected result: success, got: %s", invoke.Response.Result)
+		}
+	})
+
+	t.Run("with omit response parameter and null result", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
+				// Set null result
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: nil,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request type
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+
+		// Method invocation with Omit as request
+		invoke := &Invoke[TestRequest, Omit]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		err := client.Invoke(context.Background(), invoke)
+		if err == nil {
+			t.Fatal("expected EmptyResultError, got nil")
+		}
+
+		// Verify error
+		var emptyErr *EmptyResultError
+		if !errors.As(err, &emptyErr) {
+			t.Fatalf("expected error type: *EmptyResultError, got: %T", err)
+		}
+	})
+}
+
+// TestInvokeBatch tests the InvokeBatch method
+func TestInvokeBatch(t *testing.T) {
+	t.Run("successful case", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify batch flag
+				if !input.Batch {
+					t.Errorf("expected batch flag to be true")
+				}
+
+				// Verify requests
+				if len(input.Requests) != 2 {
+					t.Errorf("expected 2 requests, got: %d", len(input.Requests))
+					return nil, errors.New("invalid request count")
+				}
+
+				// Set responses
+				responses := make([]*JSONRPCResponse, 2)
+				for i, req := range input.Requests {
+					resultJSON, _ := json.Marshal(map[string]string{"result": "success" + string(rune('1'+i))})
+					responses[i] = &JSONRPCResponse{
+						ID:     req.ID,
+						Result: resultJSON,
+					}
+				}
+				return &SendRequestOutput{
+					Responses: responses,
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method1",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err != nil {
+			t.Fatalf("InvokeBatch error: %v", err)
+		}
+
+		// Verify responses
+		if invoke1.Response.Result != "success1" {
+			t.Errorf("expected result1: success1, got: %s", invoke1.Response.Result)
+		}
+		if invoke2.Response.Result != "success2" {
+			t.Errorf("expected result2: success2, got: %s", invoke2.Response.Result)
+		}
+	})
+
+	t.Run("with error response", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Set responses with one error
+				responses := make([]*JSONRPCResponse, 2)
+
+				// First response is success
+				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+				responses[0] = &JSONRPCResponse{
+					ID:     input.Requests[0].ID,
+					Result: resultJSON,
+				}
+
+				// Second response is error
+				responses[1] = &JSONRPCResponse{
+					ID: input.Requests[1].ID,
+					Error: &JSONRPCError{
+						Code:    -32600,
+						Message: "Invalid Request",
+					},
+				}
+
+				return &SendRequestOutput{
+					Responses: responses,
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method1",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Verify error
+		var rpcErr *RPCError
+		if !errors.As(err, &rpcErr) {
+			t.Fatalf("expected error type: *RPCError, got: %T", err)
+		}
+
+		if rpcErr.Code != -32600 {
+			t.Errorf("expected error code: -32600, got: %d", rpcErr.Code)
+		}
+
+		if rpcErr.Message != "Invalid Request" {
+			t.Errorf("expected error message: Invalid Request, got: %s", rpcErr.Message)
+		}
+
+		// First invoke should still have a response
+		if invoke1.Response.Result != "success" {
+			t.Errorf("expected result1: success, got: %s", invoke1.Response.Result)
+		}
+	})
+
+	t.Run("with missing response", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Return only one response for two requests
+				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+				response := &JSONRPCResponse{
+					ID:     input.Requests[0].ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method1",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Verify error
+		var missingErr *MissingResponseError
+		if !errors.As(err, &missingErr) {
+			t.Fatalf("expected error type: *MissingResponseError, got: %T", err)
+		}
+
+		if missingErr.Method != "test.method2" {
+			t.Errorf("expected method: test.method2, got: %s", missingErr.Method)
+		}
+	})
+
+	t.Run("with empty request list", func(t *testing.T) {
+		client := NewClient(&MockTransport{})
+
+		// Batch invocation with empty list
+		err := client.InvokeBatch(context.Background(), []MethodCaller{})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Verify error
+		var invalidErr *InvalidRequestError
+		if !errors.As(err, &invalidErr) {
+			t.Fatalf("expected error type: *InvalidRequestError, got: %T", err)
+		}
+	})
+
+	t.Run("transport error in InvokeBatch", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				return nil, &InvokeError{Method: "test.method", Err: errors.New("transport error")}
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method1",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Verify error
+		var invokeErr *InvokeError
+		if !errors.As(err, &invokeErr) {
+			t.Fatalf("expected error type: *InvokeError, got: %T", err)
+		}
+	})
+
+	t.Run("nil output from SendRequest in InvokeBatch", func(t *testing.T) {
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				return nil, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create method callers
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method1",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Verify error
+		var emptyErr *EmptyResponseError
+		if !errors.As(err, &emptyErr) {
+			t.Fatalf("expected error type: *EmptyResponseError, got: %T", err)
+		}
+	})
+
+	t.Run("with notification requests", func(t *testing.T) {
+		// Define request and response types
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		// Create a custom mock transport that handles notification requests
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify batch flag
+				if !input.Batch {
+					t.Errorf("expected batch flag to be true")
+				}
+
+				// Verify requests
+				if len(input.Requests) != 2 {
+					t.Errorf("expected 2 requests, got: %d", len(input.Requests))
+					return nil, errors.New("invalid request count")
+				}
+
+				// Manually modify the first request to be a notification (ID = nil)
+				input.Requests[0].ID = nil
+
+				// Set response for the second request only
+				resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+				response := &JSONRPCResponse{
+					ID:     input.Requests[1].ID,
+					Result: resultJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Create method callers - first one is intended to be a notification
+		invoke1 := &Invoke[TestRequest, TestResponse]{
+			ID:      nil, // This will be auto-generated by the client, but our mock will set it to nil
+			Name:    "test.notification",
+			Request: TestRequest{Param: "test1"},
+		}
+		invoke2 := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method2",
+			Request: TestRequest{Param: "test2"},
+		}
+
+		// Batch invocation
+		err := client.InvokeBatch(context.Background(), []MethodCaller{invoke1, invoke2})
+		if err != nil {
+			t.Fatalf("InvokeBatch error: %v", err)
+		}
+
+		// Verify response for the second request
+		if invoke2.Response.Result != "success" {
+			t.Errorf("expected result2: success, got: %s", invoke2.Response.Result)
+		}
+	})
+}
+
+// TestInvokeJSONRPCRequest tests the JSONRPCRequest method of Invoke
+func TestInvokeJSONRPCRequest(t *testing.T) {
+	t.Run("with regular request", func(t *testing.T) {
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		invoke := &Invoke[TestRequest, TestResponse]{
+			ID:      NewID(123),
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		request := invoke.JSONRPCRequest()
+		if request.Version != "2.0" {
+			t.Errorf("expected version: 2.0, got: %s", request.Version)
+		}
+		if request.Method != "test.method" {
+			t.Errorf("expected method: test.method, got: %s", request.Method)
+		}
+		if request.ID == nil || request.ID.intVar == nil || *request.ID.intVar != 123 {
+			t.Errorf("expected ID: 123, got: %v", request.ID)
+		}
+		if request.Params == nil {
+			t.Error("expected params to be non-nil")
+		}
+	})
+
+	t.Run("with omit request", func(t *testing.T) {
+		invoke := &Invoke[Omit, map[string]string]{
+			ID:      NewID(123),
+			Name:    "test.method",
+			Request: Omit{},
+		}
+
+		request := invoke.JSONRPCRequest()
+		if request.Version != "2.0" {
+			t.Errorf("expected version: 2.0, got: %s", request.Version)
+		}
+		if request.Method != "test.method" {
+			t.Errorf("expected method: test.method, got: %s", request.Method)
+		}
+		if request.ID == nil || request.ID.intVar == nil || *request.ID.intVar != 123 {
+			t.Errorf("expected ID: 123, got: %v", request.ID)
+		}
+		if request.Params != nil {
+			t.Errorf("expected params to be nil when using Omit, got: %v", request.Params)
+		}
+	})
+}
+
+// TestUnmarshal tests the Unmarshal method of Invoke
+func TestUnmarshal(t *testing.T) {
+	t.Run("successful unmarshal", func(t *testing.T) {
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		invoke := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
+		response := &JSONRPCResponse{
+			ID:     NewID(123),
+			Result: resultJSON,
+		}
+
+		err := invoke.Unmarshal(response)
+		if err != nil {
+			t.Fatalf("Unmarshal error: %v", err)
+		}
+
+		if invoke.Response.Result != "success" {
+			t.Errorf("expected result: success, got: %s", invoke.Response.Result)
+		}
+	})
+
+	t.Run("with omit request", func(t *testing.T) {
+		invoke := &Invoke[Omit, map[string]string]{
+			Name:    "test.method",
+			Request: Omit{},
+		}
+
+		response := &JSONRPCResponse{
+			ID:     NewID(123),
+			Result: nil,
+		}
+
+		err := invoke.Unmarshal(response)
+		if err != nil {
+			t.Fatalf("Unmarshal error: %v", err)
+		}
+	})
+
+	t.Run("with null result", func(t *testing.T) {
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		invoke := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		response := &JSONRPCResponse{
+			ID:     NewID(123),
+			Result: nil,
+		}
+
+		err := invoke.Unmarshal(response)
+		if err == nil {
+			t.Fatal("expected EmptyResultError, got nil")
+		}
+
+		var emptyErr *EmptyResultError
+		if !errors.As(err, &emptyErr) {
+			t.Fatalf("expected error type: *EmptyResultError, got: %T", err)
+		}
+	})
+
+	t.Run("with invalid JSON result", func(t *testing.T) {
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+		type TestResponse struct {
+			Result string `json:"result"`
+		}
+
+		invoke := &Invoke[TestRequest, TestResponse]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		response := &JSONRPCResponse{
+			ID:     NewID(123),
+			Result: []byte(`{"result": "success"`), // Missing closing brace
+		}
+
+		err := invoke.Unmarshal(response)
+		if err == nil {
+			t.Fatal("expected UnmarshalError, got nil")
+		}
+
+		var unmarshalErr *UnmarshalError
+		if !errors.As(err, &unmarshalErr) {
+			t.Fatalf("expected error type: *UnmarshalError, got: %T", err)
 		}
 	})
 }

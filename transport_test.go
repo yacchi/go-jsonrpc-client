@@ -72,18 +72,26 @@ func TestHTTPTransport(t *testing.T) {
 		Params:  map[string]string{"key": "value"},
 	}
 
-	// Create response
-	response := &JSONRPCResponse{
-		ID: request.ID.New(),
+	// Create input and output
+	input := &SendRequestInput{
+		Requests: []*JSONRPCRequest{request},
+		Batch:    false,
 	}
+	output := &SendRequestOutput{}
 
 	// Send request
-	err := transport.SendRequest(context.Background(), request, response)
+	var err error
+	output, err = transport.SendRequest(context.Background(), input)
 	if err != nil {
 		t.Fatalf("SendRequest error: %v", err)
 	}
 
 	// Verify response
+	if len(output.Responses) == 0 {
+		t.Fatalf("no response received")
+	}
+	response := output.Responses[0]
+
 	if response.Version != "2.0" {
 		t.Errorf("expected version: 2.0, got: %s", response.Version)
 	}
@@ -103,7 +111,148 @@ func TestHTTPTransport(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportBatch(t *testing.T) {
+	// Create a test HTTP server for batch requests
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify request
+		if r.Method != "POST" {
+			t.Errorf("expected HTTP method: POST, got: %s", r.Method)
+		}
+
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got: %s", r.Header.Get("Content-Type"))
+		}
+
+		// Read request body as array
+		var reqs []*JSONRPCRequest
+		if err := json.NewDecoder(r.Body).Decode(&reqs); err != nil {
+			t.Fatalf("request decode error: %v", err)
+		}
+
+		// Verify we got a batch request
+		if len(reqs) != 2 {
+			t.Fatalf("expected 2 requests in batch, got: %d", len(reqs))
+		}
+
+		// Create batch response
+		responses := []*JSONRPCResponse{
+			{
+				Version: "2.0",
+				ID:      reqs[0].ID,
+				Result:  json.RawMessage(`{"result":"success1"}`),
+			},
+			{
+				Version: "2.0",
+				ID:      reqs[1].ID,
+				Result:  json.RawMessage(`{"result":"success2"}`),
+			},
+		}
+
+		// Send response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(responses); err != nil {
+			t.Fatalf("response encode error: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	// Create HTTP transport
+	transport := NewHTTPTransport(server.URL)
+
+	// Create batch requests
+	request1 := &JSONRPCRequest{
+		Version: "2.0",
+		ID:      NewID(1),
+		Method:  "test.method1",
+		Params:  map[string]string{"key": "value1"},
+	}
+	request2 := &JSONRPCRequest{
+		Version: "2.0",
+		ID:      NewID(2),
+		Method:  "test.method2",
+		Params:  map[string]string{"key": "value2"},
+	}
+
+	// Create input for batch request
+	input := &SendRequestInput{
+		Requests: []*JSONRPCRequest{request1, request2},
+		Batch:    true,
+	}
+
+	// Send batch request
+	output, err := transport.SendRequest(context.Background(), input)
+	if err != nil {
+		t.Fatalf("SendRequest error: %v", err)
+	}
+
+	// Verify responses
+	if len(output.Responses) != 2 {
+		t.Fatalf("expected 2 responses, got: %d", len(output.Responses))
+	}
+
+	// Verify first response
+	response1 := output.Responses[0]
+	if response1.Version != "2.0" {
+		t.Errorf("expected version: 2.0, got: %s", response1.Version)
+	}
+	if response1.Error != nil {
+		t.Errorf("error is not nil: %v", response1.Error)
+	}
+
+	var result1 map[string]string
+	if err := json.Unmarshal(response1.Result, &result1); err != nil {
+		t.Fatalf("result decode error: %v", err)
+	}
+	if result1["result"] != "success1" {
+		t.Errorf("expected result: success1, got: %s", result1["result"])
+	}
+
+	// Verify second response
+	response2 := output.Responses[1]
+	if response2.Version != "2.0" {
+		t.Errorf("expected version: 2.0, got: %s", response2.Version)
+	}
+	if response2.Error != nil {
+		t.Errorf("error is not nil: %v", response2.Error)
+	}
+
+	var result2 map[string]string
+	if err := json.Unmarshal(response2.Result, &result2); err != nil {
+		t.Fatalf("result decode error: %v", err)
+	}
+	if result2["result"] != "success2" {
+		t.Errorf("expected result: success2, got: %s", result2["result"])
+	}
+}
+
 func TestHTTPTransportErrors(t *testing.T) {
+	t.Run("empty request list", func(t *testing.T) {
+		// Create a transport
+		transport := NewHTTPTransport("http://example.com")
+
+		// Create empty input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{},
+			Batch:    false,
+		}
+
+		_, err := transport.SendRequest(context.Background(), input)
+		if err == nil {
+			t.Fatal("no error was returned")
+		}
+
+		// Verify error type
+		var invalidRequestErr *InvalidRequestError
+		if !errors.As(err, &invalidRequestErr) {
+			t.Fatalf("expected error type: *InvalidRequestError, got: %T", err)
+		}
+
+		if invalidRequestErr.Message != "no request provided" {
+			t.Errorf("expected message: no request provided, got: %s", invalidRequestErr.Message)
+		}
+	})
+
 	t.Run("JSON encode error", func(t *testing.T) {
 		// Create a transport
 		transport := NewHTTPTransport("http://example.com")
@@ -118,11 +267,13 @@ func TestHTTPTransportErrors(t *testing.T) {
 			Params:  fn,
 		}
 
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
-		err := transport.SendRequest(context.Background(), request, response)
+		_, err := transport.SendRequest(context.Background(), input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -138,6 +289,49 @@ func TestHTTPTransportErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("batch JSON encode error", func(t *testing.T) {
+		// Create a transport
+		transport := NewHTTPTransport("http://example.com")
+
+		// Create a request that can't be marshaled to JSON
+		// Use a function value which can't be marshaled to JSON
+		fn := func() {}
+		request1 := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method1",
+			Params:  map[string]string{"key": "value"},
+		}
+		request2 := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(2),
+			Method:  "test.method2",
+			Params:  fn, // This will cause JSON marshaling to fail
+		}
+
+		// Create input for batch request with unmarshalable content
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request1, request2},
+			Batch:    true,
+		}
+
+		_, err := transport.SendRequest(context.Background(), input)
+		if err == nil {
+			t.Fatal("no error was returned")
+		}
+
+		// Verify error type
+		var marshalErr *MarshalError
+		if !errors.As(err, &marshalErr) {
+			t.Fatalf("expected error type: *MarshalError, got: %T", err)
+		}
+
+		// The method should be from the first request in the batch
+		if marshalErr.Method != "test.method1" {
+			t.Errorf("expected method: test.method1, got: %s", marshalErr.Method)
+		}
+	})
+
 	t.Run("http.NewRequestWithContext error", func(t *testing.T) {
 		// Create a transport with an invalid URL that will cause NewRequestWithContext to fail
 		transport := NewHTTPTransport("http://[::1]:namedport")
@@ -148,11 +342,13 @@ func TestHTTPTransportErrors(t *testing.T) {
 			Method:  "test.method",
 		}
 
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
-		err := transport.SendRequest(context.Background(), request, response)
+		_, err := transport.SendRequest(context.Background(), input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -181,11 +377,14 @@ func TestHTTPTransportErrors(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
-		err := transport.SendRequest(context.Background(), request, response)
+		_, err := transport.SendRequest(context.Background(), input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -208,11 +407,14 @@ func TestHTTPTransportErrors(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
-		err := transport.SendRequest(context.Background(), request, response)
+		_, err := transport.SendRequest(context.Background(), input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -239,11 +441,14 @@ func TestHTTPTransportErrors(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
-		err := transport.SendRequest(context.Background(), request, response)
+		_, err := transport.SendRequest(context.Background(), input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -252,6 +457,50 @@ func TestHTTPTransportErrors(t *testing.T) {
 		var unmarshalErr *UnmarshalError
 		if !errors.As(err, &unmarshalErr) {
 			t.Fatalf("expected error type: *UnmarshalError, got: %T", err)
+		}
+	})
+
+	t.Run("batch JSON decode error", func(t *testing.T) {
+		// Test server that returns invalid JSON for batch request
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("invalid batch json"))
+		}))
+		defer server.Close()
+
+		transport := NewHTTPTransport(server.URL)
+		request1 := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(1),
+			Method:  "test.method1",
+		}
+		request2 := &JSONRPCRequest{
+			Version: "2.0",
+			ID:      NewID(2),
+			Method:  "test.method2",
+		}
+
+		// Create input for batch request
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request1, request2},
+			Batch:    true,
+		}
+
+		_, err := transport.SendRequest(context.Background(), input)
+		if err == nil {
+			t.Fatal("no error was returned")
+		}
+
+		// Verify error type
+		var unmarshalErr *UnmarshalError
+		if !errors.As(err, &unmarshalErr) {
+			t.Fatalf("expected error type: *UnmarshalError, got: %T", err)
+		}
+
+		// Verify method name in error
+		if unmarshalErr.Method != "test.method1" {
+			t.Errorf("expected method: test.method1, got: %s", unmarshalErr.Method)
 		}
 	})
 
@@ -272,15 +521,18 @@ func TestHTTPTransportErrors(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
 		// Create a context with a short timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 
-		err := transport.SendRequest(ctx, request, response)
+		_, err := transport.SendRequest(ctx, input)
 		if err == nil {
 			t.Fatal("no error was returned")
 		}
@@ -309,8 +561,11 @@ func TestHTTPTransportErrors(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
 
 		// Create a context that will be canceled
@@ -319,7 +574,8 @@ func TestHTTPTransportErrors(t *testing.T) {
 		// Start the request in a goroutine
 		errCh := make(chan error, 1)
 		go func() {
-			errCh <- transport.SendRequest(ctx, request, response)
+			_, err := transport.SendRequest(ctx, input)
+			errCh <- err
 		}()
 
 		// Cancel the context after a short delay
@@ -367,15 +623,25 @@ func TestHTTPTransportWithCustomClient(t *testing.T) {
 		ID:      NewID(1),
 		Method:  "test.method",
 	}
-	response := &JSONRPCResponse{
-		ID: request.ID.New(),
+
+	// Create input and output
+	input := &SendRequestInput{
+		Requests: []*JSONRPCRequest{request},
+		Batch:    false,
 	}
+	output := &SendRequestOutput{}
 
 	// Send request
-	err := transport.SendRequest(context.Background(), request, response)
+	output, err := transport.SendRequest(context.Background(), input)
 	if err != nil {
 		t.Fatalf("SendRequest error: %v", err)
 	}
+
+	// Verify response
+	if len(output.Responses) == 0 {
+		t.Fatalf("no response received")
+	}
+	response := output.Responses[0]
 
 	// Verify response
 	var result map[string]string
@@ -417,15 +683,25 @@ func TestHTTPTransportOptions(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input and output
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
+		output := &SendRequestOutput{}
 
 		// Send request
-		err := transport.SendRequest(context.Background(), request, response)
+		output, err := transport.SendRequest(context.Background(), input)
 		if err != nil {
 			t.Fatalf("SendRequest error: %v", err)
 		}
+
+		// Verify response
+		if len(output.Responses) == 0 {
+			t.Fatalf("no response received")
+		}
+		response := output.Responses[0]
 
 		// Verify response
 		var result map[string]string
@@ -481,14 +757,34 @@ func TestHTTPTransportOptions(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input and output
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
+		output := &SendRequestOutput{}
 
 		// Send request
-		err := transport.SendRequest(context.Background(), request, response)
+		output, err := transport.SendRequest(context.Background(), input)
 		if err != nil {
 			t.Fatalf("SendRequest error: %v", err)
+		}
+
+		// Verify response
+		if len(output.Responses) == 0 {
+			t.Fatalf("no response received")
+		}
+		response := output.Responses[0]
+
+		// Verify response
+		var result map[string]string
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("result decode error: %v", err)
+		}
+
+		if result["result"] != "success" {
+			t.Errorf("expected result: success, got: %s", result["result"])
 		}
 	})
 
@@ -540,14 +836,34 @@ func TestHTTPTransportOptions(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input and output
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
+		output := &SendRequestOutput{}
 
 		// Send request
-		err := transport.SendRequest(context.Background(), request, response)
+		output, err := transport.SendRequest(context.Background(), input)
 		if err != nil {
 			t.Fatalf("SendRequest error: %v", err)
+		}
+
+		// Verify response
+		if len(output.Responses) == 0 {
+			t.Fatalf("no response received")
+		}
+		response := output.Responses[0]
+
+		// Verify response
+		var result map[string]string
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("result decode error: %v", err)
+		}
+
+		if result["result"] != "success" {
+			t.Errorf("expected result: success, got: %s", result["result"])
 		}
 	})
 
@@ -577,14 +893,34 @@ func TestHTTPTransportOptions(t *testing.T) {
 			ID:      NewID(1),
 			Method:  "test.method",
 		}
-		response := &JSONRPCResponse{
-			ID: request.ID.New(),
+
+		// Create input and output
+		input := &SendRequestInput{
+			Requests: []*JSONRPCRequest{request},
+			Batch:    false,
 		}
+		output := &SendRequestOutput{}
 
 		// Send request
-		err := transport.SendRequest(context.Background(), request, response)
+		output, err := transport.SendRequest(context.Background(), input)
 		if err != nil {
 			t.Fatalf("SendRequest error: %v", err)
+		}
+
+		// Verify response
+		if len(output.Responses) == 0 {
+			t.Fatalf("no response received")
+		}
+		response := output.Responses[0]
+
+		// Verify response
+		var result map[string]string
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("result decode error: %v", err)
+		}
+
+		if result["result"] != "success" {
+			t.Errorf("expected result: success, got: %s", result["result"])
 		}
 	})
 }

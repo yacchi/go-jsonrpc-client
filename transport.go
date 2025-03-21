@@ -7,11 +7,21 @@ import (
 	"net/http"
 )
 
+// SendRequestInput represents input parameters for sending a request
+type SendRequestInput struct {
+	Requests []*JSONRPCRequest
+	Batch    bool
+}
+
+// SendRequestOutput represents output results of sending a request
+type SendRequestOutput struct {
+	Responses []*JSONRPCResponse
+}
+
 // Transport is an interface for sending JSON-RPC requests
 type Transport interface {
 	// SendRequest sends a JSON-RPC request and returns the response
-	// Returns request payload, response payload, and error
-	SendRequest(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error
+	SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error)
 }
 
 // HTTPTransport is a transport for sending JSON-RPC requests via HTTP
@@ -50,17 +60,27 @@ func NewHTTPTransport(baseURL string, opts ...HTTPTransportOption) *HTTPTranspor
 }
 
 // SendRequest sends a JSON-RPC request via HTTP
-func (t *HTTPTransport) SendRequest(ctx context.Context, request *JSONRPCRequest, response *JSONRPCResponse) error {
-	method := request.Method
+func (t *HTTPTransport) SendRequest(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+	if len(input.Requests) == 0 {
+		return nil, &InvalidRequestError{Message: "no request provided"}
+	}
 
+	method := input.Requests[0].Method
 	body := bytes.NewBuffer(nil)
-	if err := json.NewEncoder(body).Encode(request); err != nil {
-		return &MarshalError{Method: method, Err: err}
+
+	if input.Batch {
+		if err := json.NewEncoder(body).Encode(input.Requests); err != nil {
+			return nil, &MarshalError{Method: method, Err: err}
+		}
+	} else {
+		if err := json.NewEncoder(body).Encode(input.Requests[0]); err != nil {
+			return nil, &MarshalError{Method: method, Err: err}
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", t.baseURL, body)
 	if err != nil {
-		return &MarshalError{Method: method, Err: err}
+		return nil, &MarshalError{Method: method, Err: err}
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -70,16 +90,29 @@ func (t *HTTPTransport) SendRequest(ctx context.Context, request *JSONRPCRequest
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return &InvokeError{Method: method, Err: err}
+		return nil, &InvokeError{Method: method, Err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return &StatusCodeError{Method: method, StatusCode: int32(resp.StatusCode)}
+		return nil, &StatusCodeError{Method: method, StatusCode: resp.StatusCode}
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
-		return &UnmarshalError{Method: method, Err: err}
+	output := &SendRequestOutput{}
+
+	if input.Batch {
+		// Decode batch response
+		if err := json.NewDecoder(resp.Body).Decode(&output.Responses); err != nil {
+			return nil, &UnmarshalError{Method: method, Err: err}
+		}
+	} else {
+		// Process single request
+		var response *JSONRPCResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return nil, &UnmarshalError{Method: method, Err: err}
+		}
+		output.Responses = []*JSONRPCResponse{response}
 	}
-	return nil
+
+	return output, nil
 }

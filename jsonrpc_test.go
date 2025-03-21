@@ -81,6 +81,28 @@ func TestJsonrpcIDNew(t *testing.T) {
 	}
 }
 
+func TestJsonrpcIDString(t *testing.T) {
+	// Test string ID
+	strID := &IDValue{strVar: new(string)}
+	*strID.strVar = "test-id"
+	if strID.String() != "test-id" {
+		t.Errorf("expected string representation: test-id, got: %s", strID.String())
+	}
+
+	// Test integer ID
+	intID := &IDValue{intVar: new(int)}
+	*intID.intVar = 42
+	if intID.String() != "42" {
+		t.Errorf("expected string representation: 42, got: %s", intID.String())
+	}
+
+	// Test nil ID (both fields are nil)
+	nilID := &IDValue{}
+	if nilID.String() != "null" {
+		t.Errorf("expected string representation: null, got: %s", nilID.String())
+	}
+}
+
 func TestJsonrpcIDIsZero(t *testing.T) {
 	// For string ID
 	strID := &IDValue{strVar: new(string)}

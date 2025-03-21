@@ -210,3 +210,54 @@ func TestIsRPCError(t *testing.T) {
 		t.Error("nil was evaluated as RPC error")
 	}
 }
+
+func TestInvalidRequestError(t *testing.T) {
+	err := &InvalidRequestError{
+		Message: "missing method",
+	}
+
+	// Test Error() method
+	expected := "rpc: invalid request: missing method"
+	if err.Error() != expected {
+		t.Errorf("expected error message: %s, got: %s", expected, err.Error())
+	}
+
+	// Test IsRPCError() method
+	if !err.IsRPCError() {
+		t.Error("IsRPCError() returned false")
+	}
+}
+
+func TestEmptyResponseError(t *testing.T) {
+	err := &EmptyResponseError{
+		Method: "test.method",
+	}
+
+	// Test Error() method
+	expected := "rpc: empty response [test.method]"
+	if err.Error() != expected {
+		t.Errorf("expected error message: %s, got: %s", expected, err.Error())
+	}
+
+	// Test IsRPCError() method
+	if !err.IsRPCError() {
+		t.Error("IsRPCError() returned false")
+	}
+}
+
+func TestMissingResponseError(t *testing.T) {
+	err := &MissingResponseError{
+		Method: "test.method",
+	}
+
+	// Test Error() method
+	expected := "rpc: missing response for method [test.method]"
+	if err.Error() != expected {
+		t.Errorf("expected error message: %s, got: %s", expected, err.Error())
+	}
+
+	// Test IsRPCError() method
+	if !err.IsRPCError() {
+		t.Error("IsRPCError() returned false")
+	}
+}

@@ -51,7 +51,7 @@ func (e *FunctionError) IsRPCError() bool {
 // StatusCodeError represents an error with a non-200 status code
 type StatusCodeError struct {
 	Method     string
-	StatusCode int32
+	StatusCode int
 }
 
 // Error returns a string representation of the status code error
@@ -154,6 +154,51 @@ func (e *RPCError) Error() string {
 
 // IsRPCError implements the Error interface
 func (e *RPCError) IsRPCError() bool {
+	return true
+}
+
+// InvalidRequestError represents an error when the request is invalid
+type InvalidRequestError struct {
+	Message string
+}
+
+// Error returns a string representation of the invalid request error
+func (e *InvalidRequestError) Error() string {
+	return fmt.Sprintf("rpc: invalid request: %s", e.Message)
+}
+
+// IsRPCError implements the Error interface
+func (e *InvalidRequestError) IsRPCError() bool {
+	return true
+}
+
+// EmptyResponseError represents an error when no response is received
+type EmptyResponseError struct {
+	Method string
+}
+
+// Error returns a string representation of the empty response error
+func (e *EmptyResponseError) Error() string {
+	return fmt.Sprintf("rpc: empty response [%s]", e.Method)
+}
+
+// IsRPCError implements the Error interface
+func (e *EmptyResponseError) IsRPCError() bool {
+	return true
+}
+
+// MissingResponseError represents an error when a response is missing for a request
+type MissingResponseError struct {
+	Method string
+}
+
+// Error returns a string representation of the missing response error
+func (e *MissingResponseError) Error() string {
+	return fmt.Sprintf("rpc: missing response for method [%s]", e.Method)
+}
+
+// IsRPCError implements the Error interface
+func (e *MissingResponseError) IsRPCError() bool {
 	return true
 }
 
