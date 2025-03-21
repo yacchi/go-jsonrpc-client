@@ -49,6 +49,10 @@ Goのパッケージは極力分割せずプロジェクトルートに格納し
 [optional footer(s)]
 ```
 
+#### 言語
+
+コミットメッセージは必ず英語で記述してください。これはプロジェクトの国際的な利用を促進し、より広いコミュニティでの理解を容易にするためです。
+
 #### 主要なタイプ
 
 - `feat`: 新機能の追加
@@ -63,9 +67,9 @@ Goのパッケージは極力分割せずプロジェクトルートに格納し
 #### 例
 
 ```
-feat: HTTPTransportにオプション機能を追加
-fix: クライアント接続エラー処理の修正
-test: HTTPTransportオプションのテスト追加
+feat: add options to HTTPTransport
+fix: fix client connection error handling
+test: add tests for HTTPTransport options
 ```
 
 ### 基本的なコマンド
