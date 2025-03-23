@@ -65,7 +65,7 @@ type MethodCaller interface {
 }
 
 // Omit is used to indicate that a parameter should be omitted
-type Omit struct{}
+type Omit json.RawMessage
 
 // Invoke represents method invocation information
 type Invoke[Tin any, Tout any] struct {
@@ -91,7 +91,11 @@ func (i *Invoke[Tin, Tout]) JSONRPCRequest() *JSONRPCRequest {
 
 // Unmarshal decodes a JSON-RPC response
 func (i *Invoke[Tin, Tout]) Unmarshal(resp *JSONRPCResponse) error {
-	if _, isOmit := any(i.Request).(Omit); isOmit {
+	if _, isOmit := any(i.Response).(Omit); isOmit {
+		if resp.Result != nil {
+			// 直接JSONデータをOmit型に代入
+			i.Response = any(Omit(resp.Result)).(Tout)
+		}
 		return nil
 	}
 	if resp.Result == nil {

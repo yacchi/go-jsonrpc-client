@@ -799,21 +799,68 @@ func TestInvoke(t *testing.T) {
 			Param string `json:"param"`
 		}
 
-		// Method invocation with Omit as request
+		// Method invocation with Omit as response
 		invoke := &Invoke[TestRequest, Omit]{
 			Name:    "test.method",
 			Request: TestRequest{Param: "test"},
 		}
 
 		err := client.Invoke(context.Background(), invoke)
-		if err == nil {
-			t.Fatal("expected EmptyResultError, got nil")
+		if err != nil {
+			t.Fatalf("Invoke error: %v", err)
 		}
 
-		// Verify error
-		var emptyErr *EmptyResultError
-		if !errors.As(err, &emptyErr) {
-			t.Fatalf("expected error type: *EmptyResultError, got: %T", err)
+		// Since Omit is now json.RawMessage, it won't be nil even with null result
+		// Just check that no error was returned
+	})
+
+	t.Run("with omit response parameter and non-null result", func(t *testing.T) {
+		// 期待するJSONレスポンス
+		expectedJSON := []byte(`{"result":"success","extra":"data"}`)
+
+		// Set up mock transport
+		transport := &MockTransport{
+			SendRequestFunc: func(ctx context.Context, input *SendRequestInput) (*SendRequestOutput, error) {
+				// Verify request
+				if len(input.Requests) == 0 {
+					t.Errorf("no requests provided")
+					return nil, errors.New("no requests provided")
+				}
+				request := input.Requests[0]
+
+				// Set a JSON result
+				response := &JSONRPCResponse{
+					ID:     request.ID,
+					Result: expectedJSON,
+				}
+				return &SendRequestOutput{
+					Responses: []*JSONRPCResponse{response},
+				}, nil
+			},
+		}
+
+		client := NewClient(transport)
+
+		// Define request type
+		type TestRequest struct {
+			Param string `json:"param"`
+		}
+
+		// Method invocation with Omit as response
+		invoke := &Invoke[TestRequest, Omit]{
+			Name:    "test.method",
+			Request: TestRequest{Param: "test"},
+		}
+
+		err := client.Invoke(context.Background(), invoke)
+		if err != nil {
+			t.Fatalf("Invoke error: %v", err)
+		}
+
+		// レスポンスのバイト列が期待するJSONと同じであることを確認
+		rawData := []byte(invoke.Response)
+		if string(rawData) != string(expectedJSON) {
+			t.Errorf("expected response data to be %s, got: %s", string(expectedJSON), string(rawData))
 		}
 	})
 }
@@ -1376,9 +1423,10 @@ func TestUnmarshal(t *testing.T) {
 			Request: Omit{},
 		}
 
+		resultJSON, _ := json.Marshal(map[string]string{"result": "success"})
 		response := &JSONRPCResponse{
 			ID:     NewID(123),
-			Result: nil,
+			Result: resultJSON,
 		}
 
 		err := invoke.Unmarshal(response)
